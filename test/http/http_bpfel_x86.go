@@ -32,6 +32,7 @@ type httpPacket struct {
 	ReqPayloadSize uint32
 	RspPayloadSize uint32
 	Status         [3]uint8
+	Url            [256]uint8
 	_              [1]byte
 }
 
