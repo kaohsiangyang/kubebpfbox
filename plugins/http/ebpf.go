@@ -7,8 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"kubebpfbox/global"
-	"log"
+	"kubebpfbox/internal/ip2pod"
 	"net"
+	"strings"
 	"syscall"
 	"unsafe"
 
@@ -35,62 +36,66 @@ func NewHttpEbpf(ch chan Traffic) *HttpEbpf {
 	}
 }
 
-const (
-	netIfName = "eth0"
-	hostIP    = "192.168.122.180"
+var (
+	netIfName string
 )
 
+// Load loads the http eBPF program into the kernel.
 func (h *HttpEbpf) Load() (err error) {
+	netIfName = global.ClusterSetting.NetInterface
+
 	// Remove the memlock limit.
 	if err = rlimit.RemoveMemlock(); err != nil {
-		log.Fatalf("Removing memlock: %v", err)
+		global.Logger.Errorf("Removing memlock: %v", err)
+		return errors.New("removing memlock")
 	}
 
 	// Load the http eBPF program into the kernel.
 	h.objs = httpObjects{}
 	if err = loadHttpObjects(&h.objs, nil); err != nil {
-		if err != nil {
-			var verr *ebpf.VerifierError
-			if errors.As(err, &verr) {
-				fmt.Printf("%+v\n", verr)
-			}
+		global.Logger.Errorf("Loading objects failed: %v", err)
+		var verr *ebpf.VerifierError
+		if errors.As(err, &verr) {
+			global.Logger.Errorf("%+v\n", verr)
 		}
-		log.Fatalf("loading objects: %v", err)
+		return errors.New("loading objects failed")
 	}
-	defer h.objs.Close()
 
 	// Open a raw socket and bind it to the specified network interface.
 	if h.rawSock, err = OpenRawSock(netIfName); err != nil {
-		log.Fatalf("Open raw sock failed: %v", err)
+		global.Logger.Errorf("Open raw sock failed: %v", err)
+		return errors.New("open raw sock failed")
 	}
 
 	// Attach the socket filter to the raw socket.
 	if err = syscall.SetsockoptInt(h.rawSock, syscall.SOL_SOCKET, SO_ATTACH_BPF, h.objs.SocketFilterHttp.FD()); err != nil {
-		log.Fatalf("Attach BPF program failed: %v", err)
+		global.Logger.Errorf("Attach BPF program failed: %v", err)
+		return errors.New("attach BPF program failed")
 	}
 	return nil
 }
 
-func (h *HttpEbpf) Start() {
+// Start starts the http eBPF program.
+func (h *HttpEbpf) Start() error {
 	// Write host IP to the filter_ip map.
-	const valueIPAddr uint32 = 1
-	if err := h.objs.FilterIp.Put(ipv4ToUint32(net.ParseIP(hostIP)), valueIPAddr); err != nil {
-		log.Fatalf("Write filter ip map failed: %v", err)
+	if err := h.WriteFilterIP(); err != nil {
+		return err
 	}
 
 	// Create a ring buffer reader for the packets map.
 	rd, err := ringbuf.NewReader(h.objs.Packets)
 	if err != nil {
-		log.Fatalf("opening ringbuf reader: %s", err)
+		global.Logger.Errorf("opening ringbuf reader: %s", err)
+		return errors.New("opening ringbuf reader")
 	}
 	defer rd.Close()
 
-	// Close the reader when upload, which will exit the read loop.
+	// Close the reader when unload, which will exit the read loop.
 	go func() {
 		<-h.stopper
-
+		h.Unload()
 		if err := rd.Close(); err != nil {
-			log.Fatalf("closing ringbuf reader: %s", err)
+			global.Logger.Errorf("closing ringbuf reader: %s", err)
 		}
 	}()
 
@@ -100,33 +105,53 @@ func (h *HttpEbpf) Start() {
 		record, err := rd.Read()
 		if err != nil {
 			if errors.Is(err, ringbuf.ErrClosed) {
-				log.Println("Exiting..")
-				return
+				<-h.stopper
+				global.Logger.Info("Exiting..")
+				return errors.New("exiting")
 			}
-			log.Printf("reading from reader: %s", err)
+			global.Logger.Warnf("Reading from reader failed: %s", err)
 			continue
 		}
 
 		// Parse the ringbuf event entry into a httpPacket structure.
 		if err := binary.Read(bytes.NewBuffer(record.RawSample), binary.LittleEndian, &packet); err != nil {
-			log.Printf("parsing ringbuf event: %s", err)
+			global.Logger.Warnf("Parsing ringbuf event failed: %s", err)
 			continue
 		}
 
 		// Decode httpPacket to traffic metric
 		if traffic, err := DecodeMapItem(&packet); err != nil {
-			log.Printf("DecodeMapItem error: %v", err)
+			global.Logger.Warnf("Decode map item error: %v", err)
 		} else {
+			global.Logger.Infof("Get traffic metric: %s", traffic.String())
 			h.ch <- *traffic
 		}
 	}
 }
 
-func (h *HttpEbpf) Unload(err error) {
-	h.stopper <- struct{}{}
-	if err = syscall.SetsockoptInt(h.rawSock, syscall.SOL_SOCKET, SO_DETACH_BPF, h.objs.SocketFilterHttp.FD()); err != nil {
-		log.Fatalf("Detach BPF program failed: %v", err)
+// Unload unloads the http eBPF program from the kernel.
+func (h *HttpEbpf) Unload() error {
+	if err := syscall.SetsockoptInt(h.rawSock, syscall.SOL_SOCKET, SO_DETACH_BPF, h.objs.SocketFilterHttp.FD()); err != nil {
+		global.Logger.Errorf("Detach BPF program failed: %v", err)
+		return errors.New("detach BPF program failed")
 	}
+	if err := h.objs.Close(); err != nil {
+		global.Logger.Errorf("Closing objects failed: %v", err)
+		return errors.New("closing objects failed")
+	}
+	return nil
+}
+
+// WriteFilterIP writes host IP to the filter_ip map.
+func (h *HttpEbpf) WriteFilterIP() error {
+	for ip := range ip2pod.GetIP2Pod().Pods {
+		if err := h.objs.FilterIp.Put(ipv4ToUint32(net.ParseIP(ip)), uint32(1)); err != nil {
+			global.Logger.Errorf("Write filter ip map failed: %v", err)
+			return errors.New("write filter ip map failed")
+		}
+		global.Logger.Debugf("Write filter ip map successfully, ip: %s", ip)
+	}
+	return nil
 }
 
 // OpenRawSock opens a raw socket and binds it to the specified network interface.
@@ -166,19 +191,19 @@ func DecodeMapItem(packet *httpPacket) (*Traffic, error) {
 	traffic := new(Traffic)
 	traffic.Type = packet.Type
 	traffic.DstIP = intToIP(packet.DstIp).String()
-	traffic.DstPort = packet.DstPort
+	traffic.DstPort = Ntohs(packet.DstPort)
 	traffic.SrcIP = intToIP(packet.SrcIp).String()
-	traffic.SrcPort = packet.SrcPort
-	traffic.Duration = packet.Duration
+	traffic.SrcPort = Ntohs(packet.SrcPort)
+	traffic.Duration = float32(packet.Duration) / (1000 * 1000)
 	traffic.Method = MethodToString(packet.Method)
-	traffic.URL = string(packet.Url[:])
+	traffic.URL = strings.TrimRight(string(packet.Url[:]), "\x00")
 	traffic.Code = string(packet.Status[:])
-	if pod, ok := global.Ip2Pod.GetPodByIP(intToIP(packet.SrcIp)); ok {
+	if pod, ok := ip2pod.GetIP2Pod().GetPodByIP(traffic.SrcIP); ok {
 		traffic.Flow = 2
 		traffic.PodName = pod.Name
 		traffic.NodeName = pod.Spec.NodeName
 		traffic.NameSpace = pod.Namespace
-	} else if pod, ok := global.Ip2Pod.GetPodByIP(intToIP(packet.DstIp)); ok {
+	} else if pod, ok := ip2pod.GetIP2Pod().GetPodByIP(traffic.DstIP); ok {
 		traffic.Flow = 1
 		traffic.PodName = pod.Name
 		traffic.NodeName = pod.Spec.NodeName
@@ -189,6 +214,7 @@ func DecodeMapItem(packet *httpPacket) (*Traffic, error) {
 	return traffic, nil
 }
 
+// MethodToString converts method uint32 to string
 func MethodToString(method uint32) string {
 	switch method {
 	case 1:
@@ -215,7 +241,7 @@ func ipv4ToUint32(ip net.IP) uint32 {
 // intToIP converts IPv4 number to net.IP
 func intToIP(ipNum uint32) net.IP {
 	ip := make(net.IP, 4)
-	binary.BigEndian.PutUint32(ip, ipNum)
+	binary.LittleEndian.PutUint32(ip, ipNum)
 	return ip
 }
 

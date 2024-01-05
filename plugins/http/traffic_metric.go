@@ -2,7 +2,7 @@ package http
 
 import (
 	"fmt"
-	"kubebpfbox/pkg/metric"
+	"kubebpfbox/internal/metric"
 	"strconv"
 	"time"
 )
@@ -16,7 +16,7 @@ type Traffic struct {
 	DstPort   uint16
 	SrcIP     string
 	SrcPort   uint16
-	Duration  uint32
+	Duration  float32
 	Method    string
 	URL       string
 	Code      string
@@ -25,13 +25,15 @@ type Traffic struct {
 	NameSpace string
 }
 
+// String return traffic metric string
 func (m *Traffic) String() string {
-	return fmt.Sprintf("%s %d %d [%s][%d] --> [%s][%d][%s %s] ====> %s [%dms] \n%s %s %s\n",
+	return fmt.Sprintf("%s %d %d [%s][%d] --> [%s][%d][%s %s] ==== %s [%fms] \n%s %s %s\n",
 		time.Now().Format("2006-01-02 15:04:05"), m.Type, m.Flow, m.SrcIP, m.SrcPort, m.DstIP, m.DstPort, m.Method, m.URL, m.Code, m.Duration,
 		m.NodeName, m.NameSpace, m.PodName,
 	)
 }
 
+// CovertMetric convert traffic to metric
 func (m *Traffic) CovertMetric() metric.Metric {
 	var metric metric.Metric
 	metric.Measurement = "traffic"

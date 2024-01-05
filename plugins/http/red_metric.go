@@ -2,7 +2,7 @@ package http
 
 import (
 	"fmt"
-	"kubebpfbox/pkg/metric"
+	"kubebpfbox/internal/metric"
 	"time"
 )
 
@@ -19,6 +19,7 @@ type RED struct {
 	Duration      float32
 }
 
+// String return RED metric string
 func (r *RED) String() string {
 	return fmt.Sprintf("%s %s %s %s %d %f %d %f %d %f %s\n",
 		r.PodName, r.NameSpace, r.NodeName, r.ServiceName, r.RequestCount,
@@ -27,6 +28,7 @@ func (r *RED) String() string {
 	)
 }
 
+// CovertMetric convert RED to metric
 func (r *RED) CovertMetric() metric.Metric {
 	var m metric.Metric
 	m.Measurement = "red"

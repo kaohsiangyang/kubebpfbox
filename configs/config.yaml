@@ -1,2 +1,13 @@
 Cluster:
   ConfigPath: /root/.kube/config
+  NetInterface: cni0
+App:
+  LogSavePath: logs
+  LogFileName: agent
+  LogFileExt: .log
+Database:
+  DBType: influxDB
+  Host: 
+  Token: 
+  Org: 
+  Bucket: 

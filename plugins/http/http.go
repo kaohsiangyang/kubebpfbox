@@ -1,21 +1,39 @@
 package http
 
 import (
-	"kubebpfbox/pkg/metric"
-	"kubebpfbox/pkg/plugin"
-	"log"
+	"kubebpfbox/global"
+	"kubebpfbox/internal/metric"
+	"kubebpfbox/internal/plugin"
 	"strconv"
 	"time"
 )
 
 type Http struct{}
 
+// Name returns the name of the plugin.
 func (h *Http) Name() string {
 	return "http"
 }
 
+// Gather collects metrics from the plugin.
 func (h *Http) Gather(c chan metric.Metric) error {
+	global.Logger.Infof("Gather http metrics")
 	ch := make(chan Traffic)
+
+	global.Logger.Infof("Load http ebpf program")
+	ebpf := NewHttpEbpf(ch)
+	if err := ebpf.Load(); err != nil {
+		global.Logger.Errorf("Load http ebpf program failed: %v", err)
+		return err
+	}
+	defer ebpf.Unload()
+
+	global.Logger.Infof("Start http ebpf program")
+	go func() {
+		if err := ebpf.Start(); err != nil {
+			global.Logger.Errorf("Start http ebpf program failed: %v", err)
+		}
+	}()
 
 	redMetric := make(map[string]RED)
 	calTicker := time.NewTicker(60 * time.Second)
@@ -43,16 +61,17 @@ func (h *Http) Gather(c chan metric.Metric) error {
 					DurationCount: int(m.Duration),
 				}
 			}
+			global.Logger.Debugf("Get traffic metric: %s", m.String())
 			c <- m.CovertMetric()
 		case <-calTicker.C:
 			for k, v := range redMetric {
 				v.QPS = float32(v.RequestCount) / 60
 				v.ErrRate = float32(v.ErrCount) / float32(v.RequestCount) * 100
 				v.Duration = float32(v.DurationCount) / float32(v.RequestCount)
+				global.Logger.Debugf("Get red metric: %s", v.String())
 				c <- v.CovertMetric()
 				delete(redMetric, k)
 			}
-			log.Printf("redmetric map is empty %+v\n", redMetric)
 		}
 	}
 }
