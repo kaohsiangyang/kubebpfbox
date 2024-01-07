@@ -4,7 +4,8 @@ import (
 	"flag"
 	"fmt"
 	"kubebpfbox/global"
-	"kubebpfbox/internal/ip2pod"
+	"kubebpfbox/internal/endpoint2pod"
+	"kubebpfbox/internal/influxdb"
 	"kubebpfbox/internal/k8s"
 	"kubebpfbox/internal/metric"
 	"kubebpfbox/internal/plugin"
@@ -23,6 +24,7 @@ import (
 var (
 	config  string
 	Storage string
+	db      *influxdb.Influxdb
 )
 
 func init() {
@@ -81,8 +83,20 @@ func setupLogger() error {
 }
 
 func setupK8s() error {
-	ip2pod.GetIP2Pod().Registry()
-	go k8s.GetPodController().Run()
+	endpoint2pod.GetEndpoint2Pod().Registry()
+	go k8s.GetServiceController().Run()
+	return nil
+}
+
+func setupInfluxdb() error {
+	influxAddr := os.Getenv("INFLUX_ADDR")
+	influxOrg := os.Getenv("INFLUX_ORG")
+	influxBucket := os.Getenv("INFLUX_BUCKET")
+	influxToken := os.Getenv("INFLUX_TOKEN")
+	if influxAddr == "" || influxOrg == "" || influxBucket == "" || influxToken == "" {
+		return fmt.Errorf("influxdb config error")
+	}
+	db = influxdb.NewInfluxdb(influxAddr, influxOrg, influxBucket, influxToken).Run()
 	return nil
 }
 
@@ -92,6 +106,10 @@ func main() {
 
 	if err := setupK8s(); err != nil {
 		global.Logger.Fatalf("Init setupK8s failed: %v", err)
+	}
+
+	if err := setupInfluxdb(); err != nil {
+		global.Logger.Fatalf("Init setupInfluxdb failed: %v", err)
 	}
 
 	ch := make(chan metric.Metric, 1000)
@@ -107,9 +125,10 @@ func main() {
 	for {
 		select {
 		case m := <-ch:
-			fmt.Printf("Get metric: %s", m.String())
+			db.Write(m)
+			log.Printf("Get metric: %s", m.String())
 		case <-stopper:
-			fmt.Print("Get stop signal, exit\n")
+			log.Print("Get stop signal, exit\n")
 			return
 		}
 	}

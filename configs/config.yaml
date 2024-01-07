@@ -5,9 +5,3 @@ App:
   LogSavePath: logs
   LogFileName: agent
   LogFileExt: .log
-Database:
-  DBType: influxDB
-  Host: 
-  Token: 
-  Org: 
-  Bucket: 

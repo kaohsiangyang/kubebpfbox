@@ -64,7 +64,6 @@ func (i *Influxdb) Run() *Influxdb {
 
 // Commit commit data to influxdb
 func (i *Influxdb) Commit() error {
-	global.Logger.Infof("begin to commit data [%d]\n", len(i.Points))
 	if err := i.WriteApi.WritePoint(context.Background(), i.Points...); err != nil {
 		global.Logger.Errorf("write influxdb error: %+v\n", err)
 		return err

@@ -11,25 +11,26 @@ type Traffic struct {
 	//HTTP, RPC, MySQL etc.
 	Type uint32
 	// 1: ingress, 2: egress
-	Flow      int
-	DstIP     string
-	DstPort   uint16
-	SrcIP     string
-	SrcPort   uint16
-	Duration  float32
-	Method    string
-	URL       string
-	Code      string
-	PodName   string
-	NodeName  string
-	NameSpace string
+	Flow        int
+	DstIP       string
+	DstPort     uint16
+	SrcIP       string
+	SrcPort     uint16
+	Duration    float32
+	Method      string
+	URL         string
+	Code        string
+	PodName     string
+	NodeName    string
+	NameSpace   string
+	ServiceName string
 }
 
 // String return traffic metric string
 func (m *Traffic) String() string {
-	return fmt.Sprintf("%s %d %d [%s][%d] --> [%s][%d][%s %s] ==== %s [%fms] \n%s %s %s\n",
+	return fmt.Sprintf("%s %d %d [%s][%d] -> [%s][%d][%s %s] ==== %s [%fms] \n%s %s %s %s\n",
 		time.Now().Format("2006-01-02 15:04:05"), m.Type, m.Flow, m.SrcIP, m.SrcPort, m.DstIP, m.DstPort, m.Method, m.URL, m.Code, m.Duration,
-		m.NodeName, m.NameSpace, m.PodName,
+		m.NodeName, m.NameSpace, m.PodName, m.ServiceName,
 	)
 }
 
@@ -40,6 +41,7 @@ func (m *Traffic) CovertMetric() metric.Metric {
 	metric.AddTags("podname", m.PodName)
 	metric.AddTags("nodename", m.NodeName)
 	metric.AddTags("namespace", m.NameSpace)
+	metric.AddTags("servicename", m.ServiceName)
 	metric.AddTags("type", strconv.Itoa(int(m.Type)))
 	metric.AddTags("flow", strconv.Itoa(m.Flow))
 	metric.AddTags("dstip", m.DstIP)

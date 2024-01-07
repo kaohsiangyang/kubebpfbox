@@ -1,13 +1,13 @@
 package http
 
-//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -type packet --target=amd64 http ../../ebpf/http/http.c
+//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -type packet -target amd64 http ../../ebpf/http/http.c
 import (
 	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"kubebpfbox/global"
-	"kubebpfbox/internal/ip2pod"
+	"kubebpfbox/internal/endpoint2pod"
 	"net"
 	"strings"
 	"syscall"
@@ -82,6 +82,9 @@ func (h *HttpEbpf) Start() error {
 		return err
 	}
 
+	// Update the filter_ip map when endpoints change.
+	h.Registry()
+
 	// Create a ring buffer reader for the packets map.
 	rd, err := ringbuf.NewReader(h.objs.Packets)
 	if err != nil {
@@ -142,14 +145,42 @@ func (h *HttpEbpf) Unload() error {
 	return nil
 }
 
+// AddFilterIP adds host IP to the filter_ip map.
+func (h *HttpEbpf) AddFilterIP(endpoint *endpoint2pod.Endpoint, provider *endpoint2pod.Provider) error {
+	if err := h.objs.FilterIp.Put(ipv4ToUint32(net.ParseIP(endpoint.IP)), uint32(1)); err != nil {
+		global.Logger.Errorf("Add filter ip map failed: %v", err)
+		return errors.New("add filter ip map failed")
+	}
+	global.Logger.Debugf("Add filter ip map successfully, ip: %s", endpoint.IP)
+	return nil
+}
+
+// DeleteFilterIP deletes host IP from the filter_ip map.
+func (h *HttpEbpf) DeleteFilterIP(endpoint *endpoint2pod.Endpoint, provider *endpoint2pod.Provider) error {
+	if err := h.objs.FilterIp.Delete(ipv4ToUint32(net.ParseIP(endpoint.IP))); err != nil {
+		global.Logger.Errorf("Delete filter ip map failed: %v", err)
+		return errors.New("delete filter ip map failed")
+	}
+	global.Logger.Debugf("Delete filter ip map successfully, ip: %s", endpoint.IP)
+	return nil
+}
+
+// Registry registers HttpEbpf to endpoint2pod controller
+func (h *HttpEbpf) Registry() {
+	endpoint2pod := endpoint2pod.GetEndpoint2Pod()
+	endpoint2pod.AddEventHandlers = append(endpoint2pod.AddEventHandlers, h.AddFilterIP)
+	endpoint2pod.DeleteEventHandlers = append(endpoint2pod.DeleteEventHandlers, h.DeleteFilterIP)
+}
+
 // WriteFilterIP writes host IP to the filter_ip map.
 func (h *HttpEbpf) WriteFilterIP() error {
-	for ip := range ip2pod.GetIP2Pod().Pods {
-		if err := h.objs.FilterIp.Put(ipv4ToUint32(net.ParseIP(ip)), uint32(1)); err != nil {
+	// TODO: 向Endpoints2Pods中注册回调函数，当Endpoints发生变化时，更新filter_ip map, 然后测试
+	for provider := range endpoint2pod.GetEndpoint2Pod().Providers {
+		if err := h.objs.FilterIp.Put(ipv4ToUint32(net.ParseIP(provider.IP)), uint32(1)); err != nil {
 			global.Logger.Errorf("Write filter ip map failed: %v", err)
 			return errors.New("write filter ip map failed")
 		}
-		global.Logger.Debugf("Write filter ip map successfully, ip: %s", ip)
+		global.Logger.Debugf("Write filter ip map successfully, ip: %s", provider.IP)
 	}
 	return nil
 }
@@ -198,18 +229,14 @@ func DecodeMapItem(packet *httpPacket) (*Traffic, error) {
 	traffic.Method = MethodToString(packet.Method)
 	traffic.URL = strings.TrimRight(string(packet.Url[:]), "\x00")
 	traffic.Code = string(packet.Status[:])
-	if pod, ok := ip2pod.GetIP2Pod().GetPodByIP(traffic.SrcIP); ok {
-		traffic.Flow = 2
-		traffic.PodName = pod.Name
-		traffic.NodeName = pod.Spec.NodeName
-		traffic.NameSpace = pod.Namespace
-	} else if pod, ok := ip2pod.GetIP2Pod().GetPodByIP(traffic.DstIP); ok {
+	if provider, ok := endpoint2pod.GetEndpoint2Pod().GetPodByEndpoint(traffic.DstIP, int32(traffic.DstPort)); ok {
 		traffic.Flow = 1
-		traffic.PodName = pod.Name
-		traffic.NodeName = pod.Spec.NodeName
-		traffic.NameSpace = pod.Namespace
+		traffic.PodName = provider.PodName
+		traffic.NodeName = provider.NodeName
+		traffic.NameSpace = provider.NameSpace
+		traffic.ServiceName = provider.ServiceName
 	} else {
-		return nil, fmt.Errorf("can't find pod by ip %s", intToIP(packet.SrcIp).String())
+		return nil, fmt.Errorf("can't find pod by Endpoint: [%s:%d]", traffic.DstIP, traffic.DstPort)
 	}
 	return traffic, nil
 }
