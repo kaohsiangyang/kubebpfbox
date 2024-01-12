@@ -9,10 +9,10 @@ kubebpfbox 是基于 ebpf 技术在 Kubernetes 环境中实践可观测性的项
 
 ### 特性
 目前支持的功能特性：  
-[x] HTTP 流量分析：基于经典的 `BPF_PROG_TYPE_SOCKET_FILTER` 类型分析每一次 HTTP 流量，并且和 Kubernetes 元数据进行关联，还原 Pod 之间的每一次 HTTP 请求和响应。  
-[x] R.E.D 指标统计：基于 Pod 的 HTTP 流量，统计每个 Pod 的 QPS、Error Rate、Duration等性能指标  
-[ ] OOM 事件日志：基于 Kprobe 内核态探针类型分析每一次 Out of Memory 事件，~~将被 kill 的进程的 pid 和 Kubernetes 元数据进行关联（未完成）~~，准确定位每次 OOM 事件发生的位置。  
-[ ] TCP Backlog 队列溢出事件日志：基于 Kprobe 内核态探针类型分析每一次 TCP Backlog 队列溢出事件，~~将发生溢出的进程的 pid 和 Kubernetes 元数据进行关联（未完成）~~，准确定位每次 TCP Backlog 队列溢出事件发生的位置及发生时的队列状态，包括队列当前值与队列上限。
+- [x] HTTP 流量分析：基于经典的 `BPF_PROG_TYPE_SOCKET_FILTER` 类型分析每一次 HTTP 流量，并且和 Kubernetes 元数据进行关联，还原 Pod 之间的每一次 HTTP 请求和响应。  
+- [x] R.E.D 指标统计：基于 Pod 的 HTTP 流量，统计每个 Pod 的 QPS、Error Rate、Duration等性能指标  
+- [ ] OOM 事件日志：基于 Kprobe 内核态探针类型分析每一次 Out of Memory 事件，~~将被 kill 的进程的 pid 和 Kubernetes 元数据进行关联（未完成）~~，准确定位每次 OOM 事件发生的位置。  
+- [ ] TCP Backlog 队列溢出事件日志：基于 Kprobe 内核态探针类型分析每一次 TCP Backlog 队列溢出事件，~~将发生溢出的进程的 pid 和 Kubernetes 元数据进行关联（未完成）~~，准确定位每次 TCP Backlog 队列溢出事件发生的位置及发生时的队列状态，包括队列当前值与队列上限。
 
 ## 基本结构
 * agent 通过 daemonset 特权容器方式部署在每个节点上，管理 eBPF 程序的生命周期（加载、挂载、卸载），通过 Map 进行数据交互，将采集的同Kubernetes 集群的元数据关联分析后，写入 InfluxDB 中。
