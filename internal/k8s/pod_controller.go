@@ -22,7 +22,7 @@ var once sync.Once
 
 func GetPodController() *PodController {
 	once.Do(func() {
-		factory := NewInformerFactory().Factory
+		factory := GetInformerFactory().Factory
 
 		informer := factory.Core().V1().Pods().Informer()
 

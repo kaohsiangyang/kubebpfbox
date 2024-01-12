@@ -1,16 +1,8 @@
-// go:build ignore
-#include <linux/bpf.h>
+//go:build ignore
+#include "../include/vmlinux.h"
 #include "../include/bpf_helpers.h"
-// #include "../include/common.h"
 #include "../include/bpf_endian.h"
-#include <linux/if_ether.h>
-#include <linux/if_packet.h>
-#include <linux/ip.h>
-// #include <linux/in.h>
-// #include <linux/string.h>
-#include <linux/tcp.h>
-#include <linux/types.h>
-#include <netinet/in.h>
+#include "../include/bpf_tracing.h"
 
 char __license[] SEC("license") = "Dual MIT/GPL";
 
@@ -20,8 +12,11 @@ char __license[] SEC("license") = "Dual MIT/GPL";
 #define MAX_URL_LEN 256
 #define STATUS_LEN 3
 
+#define ETH_HLEN	14
+#define ETH_P_IP	0x0800
+
 // A four-tuple that uniquely identifies a connection
-struct key
+struct conn_key
 {
     __u32 src_ip;
     __u32 dst_ip;
@@ -29,7 +24,7 @@ struct key
     __u16 dst_port;
 };
 
-enum packet_type
+enum packet_type_t
 {
     T_HTTP = 1,
     T_RPC = 2,
@@ -75,7 +70,7 @@ struct
 {
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, MAX_MAP_CONN);
-    __type(key, struct key);
+    __type(key, struct conn_key);
     __type(value, struct packet);
 } request_map SEC(".maps");
 
@@ -226,7 +221,7 @@ int socket__filter_http(struct __sk_buff *skb)
     // Skip non-IP packets
     __u16 eth_proto;
     bpf_skb_load_bytes(skb, offsetof(struct ethhdr, h_proto), &eth_proto, sizeof(eth_proto));
-    if (ntohs(eth_proto) != ETH_P_IP)
+    if (bpf_ntohs(eth_proto) != ETH_P_IP)
         return -1;
 
     // Skip non-TCP packets
@@ -270,7 +265,7 @@ int socket__filter_http(struct __sk_buff *skb)
     p.src_port = tcph.source;
     p.dst_port = tcph.dest;
 
-    struct key k = {};
+    struct conn_key k = {};
 
     // Process HTTP requests
     int result = __is_http_request(pre_char);
@@ -284,7 +279,7 @@ int socket__filter_http(struct __sk_buff *skb)
             so the calculated payload size of the current data packet
             may not be equal to the HTTP message length.
         */
-        p.req_payload_size = ntohs(iph.tot_len) - ip_hlen - tcp_hlen;
+        p.req_payload_size = bpf_ntohs(iph.tot_len) - ip_hlen - tcp_hlen;
 
         // Get the URL of the HTTP request
         int len = __get_http_request_method_len(p.method);
@@ -315,7 +310,7 @@ int socket__filter_http(struct __sk_buff *skb)
 
         // Filled the HTTP response data
         req->duration = bpf_ktime_get_ns() - req->duration;
-        req->rsp_payload_size = ntohs(iph.tot_len) - ip_hlen - tcp_hlen;
+        req->rsp_payload_size = bpf_ntohs(iph.tot_len) - ip_hlen - tcp_hlen;
         req->status[0] = pre_char[9];
         req->status[1] = pre_char[10];
         req->status[2] = pre_char[11];

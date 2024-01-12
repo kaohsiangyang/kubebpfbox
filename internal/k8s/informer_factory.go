@@ -4,6 +4,7 @@ import (
 	"kubebpfbox/global"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
@@ -17,35 +18,41 @@ type InformerFactory struct {
 	Factory   informers.SharedInformerFactory
 }
 
-// NewInformerFactory return a informer factory
-func NewInformerFactory() *InformerFactory {
-	// get the kube config
-	var config *rest.Config
-	var err error
-	incluster := os.Getenv("IN_CLUSTER")
-	if incluster == "true" {
-		config, err = rest.InClusterConfig()
-	} else {
-		config, err = outClusterConfig()
-	}
-	if err != nil {
-		global.Logger.Fatal("Parse cluster config failed: ", err)
-	}
+var informerFactory *InformerFactory
+var onceInformer sync.Once
 
-	// create the clientset
-	clientset, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		global.Logger.Fatal("Create clientset failed: ", err)
-	}
+// GetInformerFactory return a informer factory
+func GetInformerFactory() *InformerFactory {
+	onceInformer.Do(func() {
+		// get the kube config
+		var config *rest.Config
+		var err error
+		incluster := os.Getenv("IN_CLUSTER")
+		if incluster == "true" {
+			config, err = rest.InClusterConfig()
+		} else {
+			config, err = outClusterConfig()
+		}
+		if err != nil {
+			global.Logger.Fatal("Parse cluster config failed: ", err)
+		}
 
-	// create the factory
-	factory := informers.NewSharedInformerFactory(clientset, 0)
+		// create the clientset
+		clientset, err := kubernetes.NewForConfig(config)
+		if err != nil {
+			global.Logger.Fatal("Create clientset failed: ", err)
+		}
 
-	return &InformerFactory{
-		Config:    config,
-		Clientset: clientset,
-		Factory:   factory,
-	}
+		// create the factory
+		factory := informers.NewSharedInformerFactory(clientset, 0)
+
+		informerFactory = &InformerFactory{
+			Config:    config,
+			Clientset: clientset,
+			Factory:   factory,
+		}
+	})
+	return informerFactory
 }
 
 // OutClusterConfig return a config for out of cluster

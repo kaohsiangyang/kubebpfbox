@@ -22,7 +22,7 @@ var onceService sync.Once
 
 func GetServiceController() *ServiceController {
 	onceService.Do(func() {
-		factory := NewInformerFactory().Factory
+		factory := GetInformerFactory().Factory
 
 		informer := factory.Core().V1().Endpoints().Informer()
 

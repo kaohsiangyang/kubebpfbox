@@ -7,7 +7,9 @@ BPF2GO_CC = clang
 all: build
 
 build:
-	go generate plugins/http/
+	go generate ./plugins/http/...
+	go generate ./plugins/oomkill/...
+	go generate ./plugins/tcpsynbl/...
 	CGO_ENABLED=0 \
 	go build -o $(BUILD_DIR)/$(PROGRAM) .
 

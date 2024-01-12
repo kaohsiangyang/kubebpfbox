@@ -8,6 +8,7 @@ import (
 	"kubebpfbox/internal/influxdb"
 	"kubebpfbox/internal/k8s"
 	"kubebpfbox/internal/metric"
+	"kubebpfbox/internal/pid2pod"
 	"kubebpfbox/internal/plugin"
 	"kubebpfbox/pkg/logger"
 	"kubebpfbox/pkg/setting"
@@ -85,6 +86,8 @@ func setupLogger() error {
 func setupK8s() error {
 	endpoint2pod.GetEndpoint2Pod().Registry()
 	go k8s.GetServiceController().Run()
+	pid2pod.GetPid2Pod().Registry()
+	go k8s.GetPodController().Run()
 	return nil
 }
 
@@ -104,22 +107,23 @@ func main() {
 	stopper := make(chan os.Signal, 1)
 	signal.Notify(stopper, os.Interrupt, syscall.SIGTERM)
 
-	if err := setupK8s(); err != nil {
-		global.Logger.Fatalf("Init setupK8s failed: %v", err)
-	}
-
 	if err := setupInfluxdb(); err != nil {
 		global.Logger.Fatalf("Init setupInfluxdb failed: %v", err)
 	}
 
+	if err := setupK8s(); err != nil {
+		global.Logger.Fatalf("Init setupK8s failed: %v", err)
+	}
+
 	ch := make(chan metric.Metric, 1000)
-	for _, plugin := range plugin.Plugins {
-		global.Logger.Infof("Gather %s metrics", plugin.Name())
-		go func() {
-			if err := plugin.Gather(ch); err != nil {
-				global.Logger.Errorf("Gather %s metrics failed: %v", plugin.Name(), err)
+	global.Logger.Infof("Start gather metrics: %d", len(plugin.Plugins))
+	for _, p := range plugin.Plugins {
+		global.Logger.Infof("Gather %s metrics", p.Name())
+		go func(p plugin.Plugin) {
+			if err := p.Gather(ch); err != nil {
+				global.Logger.Errorf("Gather %s metrics failed: %v", p.Name(), err)
 			}
-		}()
+		}(p)
 	}
 
 	for {

@@ -32,7 +32,8 @@ type HttpEbpf struct {
 
 func NewHttpEbpf(ch chan Traffic) *HttpEbpf {
 	return &HttpEbpf{
-		ch: ch,
+		stopper: make(chan struct{}),
+		ch:      ch,
 	}
 }
 
@@ -108,7 +109,7 @@ func (h *HttpEbpf) Start() error {
 		record, err := rd.Read()
 		if err != nil {
 			if errors.Is(err, ringbuf.ErrClosed) {
-				<-h.stopper
+				h.stopper <- struct{}{}
 				global.Logger.Info("Exiting..")
 				return errors.New("exiting")
 			}

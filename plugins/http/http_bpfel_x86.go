@@ -12,7 +12,7 @@ import (
 	"github.com/cilium/ebpf"
 )
 
-type httpKey struct {
+type httpConnKey struct {
 	SrcIp   uint32
 	DstIp   uint32
 	SrcPort uint16
